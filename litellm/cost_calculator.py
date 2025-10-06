@@ -829,6 +829,19 @@ def completion_cost(  # noqa: PLR0915
                         size=size,
                         optional_params=optional_params,
                     )
+                elif CostCalculatorUtils._call_type_has_video_response(call_type):
+                    ### VIDEO GENERATION COST CALCULATION ###
+                    # Extract video duration from optional_params if available
+                    video_duration_seconds = None
+                    if optional_params:
+                        video_duration_seconds = optional_params.get("video_duration_seconds")
+                    
+                    return CostCalculatorUtils.route_video_generation_cost_calculator(
+                        model=model,
+                        custom_llm_provider=custom_llm_provider,
+                        request_body=optional_params,
+                        video_duration_seconds=video_duration_seconds,
+                    )
                 elif (
                     call_type == CallTypes.speech.value
                     or call_type == CallTypes.aspeech.value

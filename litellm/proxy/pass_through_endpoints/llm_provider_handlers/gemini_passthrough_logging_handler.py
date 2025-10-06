@@ -70,6 +70,32 @@ class GeminiPassthroughLoggingHandler:
                 "result": litellm_model_response,
                 "kwargs": kwargs,
             }
+        elif "predictLongRunning" in url_route:
+            model = GeminiPassthroughLoggingHandler.extract_model_from_url(url_route)
+            
+            # Create mock ModelResponse for cost tracking
+            mock_video_response = GeminiPassthroughLoggingHandler._create_video_generation_mock_response(
+                response_body=response_body,
+                model=model,
+                logging_obj=logging_obj,
+            )
+            
+            # Handle video generation request logging
+            kwargs = GeminiPassthroughLoggingHandler._create_gemini_video_generation_logging_payload(
+                response_body=response_body,
+                model=model,
+                kwargs=kwargs,
+                start_time=start_time,
+                end_time=end_time,
+                logging_obj=logging_obj,
+                request_body=request_body,
+                custom_llm_provider="gemini",
+            )
+
+            return {
+                "result": mock_video_response,  # Return mock response for cost tracking
+                "kwargs": kwargs,
+            }
         else:
             return {
                 "result": None,
@@ -202,3 +228,200 @@ class GeminiPassthroughLoggingHandler:
         logging_obj.model_call_details["custom_llm_provider"] = custom_llm_provider
         logging_obj.model_call_details["response_cost"] = response_cost
         return kwargs
+
+    @staticmethod
+    def _create_gemini_video_generation_logging_payload(
+        response_body: dict,
+        model: str,
+        kwargs: dict,
+        start_time: datetime,
+        end_time: datetime,
+        logging_obj: LiteLLMLoggingObj,
+        request_body: dict,
+        custom_llm_provider: str,
+    ):
+        """
+        Create the standard logging object for Gemini passthrough video generation (predictLongRunning)
+        
+        For Veo models, we calculate cost based on video generation parameters
+        """
+        try:
+            # Calculate video generation cost using dedicated calculator
+            response_cost = GeminiPassthroughLoggingHandler._calculate_video_generation_cost(
+                model=model,
+                request_body=request_body,
+                response_body={},  # Not used in cost calculation
+                start_time=start_time,
+                end_time=end_time,
+            )
+
+            kwargs["response_cost"] = response_cost
+            kwargs["model"] = model
+            kwargs["custom_llm_provider"] = custom_llm_provider
+            kwargs["call_type"] = "video_generation"
+
+            # Extract prompt for logging
+            prompt = ""
+            if request_body and "instances" in request_body:
+                instances = request_body["instances"]
+                if isinstance(instances, list) and len(instances) > 0:
+                    prompt = instances[0].get("prompt", "")
+            
+            kwargs["prompt"] = prompt
+
+            # pretty print standard logging object
+            verbose_proxy_logger.debug("Video generation kwargs= %s", json.dumps(kwargs, indent=4, default=str))
+
+            # set litellm_call_id to logging response object
+            logging_obj.litellm_call_id = logging_obj.litellm_call_id
+            logging_obj.model = model
+            logging_obj.model_call_details["model"] = model
+            logging_obj.model_call_details["custom_llm_provider"] = custom_llm_provider
+            logging_obj.model_call_details["response_cost"] = response_cost
+            logging_obj.model_call_details["call_type"] = "video_generation"
+            
+            return kwargs
+        except Exception as e:
+            verbose_proxy_logger.exception(
+                "Error creating Gemini video generation logging payload: %s", e
+            )
+            return kwargs
+
+    @staticmethod
+    def _calculate_video_generation_cost(
+        model: str,
+        request_body: dict,
+        response_body: dict,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> float:
+        """
+        Calculate cost for Gemini video generation (Veo models)
+        
+        Uses the dedicated Gemini video generation cost calculator.
+        """
+        try:
+            from litellm.llms.gemini.video_generation.cost_calculator import cost_calculator
+            
+            verbose_proxy_logger.info(
+                f"🎬 Calculating video generation cost for model: {model}"
+            )
+            
+            cost = cost_calculator(
+                model=model,
+                request_body=request_body,
+            )
+            
+            verbose_proxy_logger.info(
+                f"💰 Video generation cost calculated: ${cost} for model {model}"
+            )
+            
+            return cost
+            
+        except Exception as e:
+            verbose_proxy_logger.exception(
+                "Error calculating video generation cost for model %s: %s", model, e
+            )
+            return 0.0
+
+    @staticmethod
+    def _create_video_generation_mock_response(
+        response_body: dict,
+        model: str,
+        logging_obj: LiteLLMLoggingObj,
+    ) -> ModelResponse:
+        """
+        Create a mock ModelResponse for video generation to enable cost tracking
+        
+        Video generation responses don't follow the standard ModelResponse format,
+        but we need a ModelResponse object for the cost tracking system to work.
+        """
+        try:
+            # Extract operation name from response
+            operation_name = ""
+            if "name" in response_body:
+                operation_name = response_body["name"]
+            elif isinstance(response_body.get("response"), str):
+                # Parse JSON string response
+                import json
+                try:
+                    parsed_response = json.loads(response_body["response"])
+                    operation_name = parsed_response.get("name", "")
+                except json.JSONDecodeError:
+                    pass
+            
+            # Calculate the cost for this video generation request
+            calculated_cost = GeminiPassthroughLoggingHandler._calculate_video_generation_cost(
+                model=model,
+                response_body=response_body,
+                request_body={},  # We can pass empty since we use fixed cost
+                start_time=datetime.now(),
+                end_time=datetime.now()
+            )
+            
+            # Create mock ModelResponse
+            mock_response = ModelResponse(
+                id=logging_obj.litellm_call_id,
+                object="video_generation",
+                created=int(datetime.now().timestamp()),
+                model=model,
+                choices=[
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": f"{operation_name}"
+                        },
+                        "finish_reason": "stop"
+                    }
+                ],
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0
+                }
+            )
+            
+            # Add the calculated cost to hidden params so it gets picked up by the cost calculator
+            mock_response._hidden_params = {"response_cost": calculated_cost}
+            
+            verbose_proxy_logger.info(
+                f"🎬💰 VIDEO COST ATTACHED: model={model}, cost=${calculated_cost}, operation={operation_name}"
+            )
+            
+            return mock_response
+            
+        except Exception as e:
+            verbose_proxy_logger.exception(
+                "Error creating mock video generation response: %s", e
+            )
+            # Fallback to basic ModelResponse with fixed cost
+            fallback_response = ModelResponse(
+                id=logging_obj.litellm_call_id,
+                object="video_generation",
+                created=int(datetime.now().timestamp()),
+                model=model,
+                choices=[],
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+            
+            # Still apply the cost even in fallback case
+            try:
+                fallback_cost = GeminiPassthroughLoggingHandler._calculate_video_generation_cost(
+                    model=model,
+                    response_body=response_body,
+                    request_body={},
+                    start_time=datetime.now(),
+                    end_time=datetime.now()
+                )
+                fallback_response._hidden_params = {"response_cost": fallback_cost}
+                verbose_proxy_logger.info(
+                    f"🎬💰 FALLBACK VIDEO COST ATTACHED: model={model}, cost=${fallback_cost}"
+                )
+            except Exception as cost_error:
+                verbose_proxy_logger.warning(
+                    f"Failed to calculate fallback cost for {model}: {cost_error}"
+                )
+                fallback_response._hidden_params = {"response_cost": 0.5}  # Default to $0.50
+            
+            return fallback_response

@@ -53,7 +53,7 @@ class PassThroughEndpointLogging:
         self.TRACKED_LANGFUSE_ROUTES = ["/langfuse/"]
 
         # Gemini
-        self.TRACKED_GEMINI_ROUTES = ["generateContent", "streamGenerateContent"]
+        self.TRACKED_GEMINI_ROUTES = ["generateContent", "streamGenerateContent", "predictLongRunning"]
 
         # Vertex AI Live API WebSocket
         self.TRACKED_VERTEX_AI_LIVE_ROUTES = ["/vertex_ai/live"]
@@ -350,8 +350,13 @@ class PassThroughEndpointLogging:
     def is_gemini_route(self, url_route: str, custom_llm_provider: Optional[str] = None):
         """Check if the URL route is a Gemini API route."""
         for route in self.TRACKED_GEMINI_ROUTES:
-            if route in url_route and custom_llm_provider == "gemini":
-                return True
+            if route in url_route:
+                # Check if custom_llm_provider is explicitly set to gemini
+                if custom_llm_provider == "gemini":
+                    return True
+                # Also check for typical Gemini API URL patterns
+                if "generativelanguage.googleapis.com" in url_route or "v1beta/models" in url_route:
+                    return True
         return False
 
     def _is_supported_openai_endpoint(self, url_route: str) -> bool:

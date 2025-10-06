@@ -229,6 +229,8 @@ class CallTypes(Enum):
     aimage_generation = "aimage_generation"
     image_edit = "image_edit"
     aimage_edit = "aimage_edit"
+    video_generation = "video_generation"
+    avideo_generation = "avideo_generation"
     moderation = "moderation"
     amoderation = "amoderation"
     atranscription = "atranscription"
@@ -311,6 +313,8 @@ CallTypesLiteral = Literal[
     "aimage_generation",
     "image_edit",
     "aimage_edit",
+    "video_generation",
+    "avideo_generation",
     "moderation",
     "amoderation",
     "atranscription",

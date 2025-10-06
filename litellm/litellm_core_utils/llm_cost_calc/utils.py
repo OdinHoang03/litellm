@@ -629,6 +629,25 @@ class CostCalculatorUtils:
         return False
 
     @staticmethod
+    def _call_type_has_video_response(call_type: str) -> bool:
+        """
+        Returns True if the call type has a video response
+
+        eg calls that have video response:
+        - Video Generation
+        - Passthrough Video Generation
+        """
+        if call_type in [
+            # video generation
+            CallTypes.video_generation.value,
+            CallTypes.avideo_generation.value,
+            # passthrough video generation
+            "video_generation",  # For passthrough endpoints
+        ]:
+            return True
+        return False
+
+    @staticmethod
     def route_image_generation_cost_calculator(
         model: str,
         completion_response: Any,
@@ -717,3 +736,53 @@ class CostCalculatorUtils:
                 optional_params=optional_params,
             )
         return 0.0
+
+    @staticmethod
+    def route_video_generation_cost_calculator(
+        model: str,
+        custom_llm_provider: Optional[str] = None,
+        request_body: Optional[dict] = None,
+        video_duration_seconds: Optional[float] = None,
+        **kwargs,
+    ) -> float:
+        """
+        Route the video generation cost calculator based on the custom_llm_provider
+        """
+        if custom_llm_provider == litellm.LlmProviders.GEMINI.value:
+            from litellm.llms.gemini.video_generation.cost_calculator import (
+                cost_calculator as gemini_video_cost_calculator,
+            )
+
+            return gemini_video_cost_calculator(
+                model=model,
+                request_body=request_body,
+                video_duration_seconds=video_duration_seconds,
+            )
+        elif custom_llm_provider == litellm.LlmProviders.VERTEX_AI.value:
+            # For now, use Gemini calculator for Vertex AI Veo models
+            from litellm.llms.gemini.video_generation.cost_calculator import (
+                cost_calculator as gemini_video_cost_calculator,
+            )
+
+            return gemini_video_cost_calculator(
+                model=model,
+                request_body=request_body,
+                video_duration_seconds=video_duration_seconds,
+            )
+        else:
+            # Default video generation cost calculation
+            try:
+                model_info = litellm.get_model_info(
+                    model=model,
+                    custom_llm_provider=custom_llm_provider,
+                )
+                
+                output_cost_per_second = model_info.get("output_cost_per_second", 0.0)
+                
+                if output_cost_per_second and video_duration_seconds:
+                    return float(video_duration_seconds) * float(output_cost_per_second)
+                
+            except Exception:
+                pass
+                
+            return 0.0
